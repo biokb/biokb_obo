@@ -1,0 +1,31 @@
+import os
+from pathlib import Path
+
+# standard for all biokb projects, but individual set
+PROJECT_NAME = "obo"
+BASIC_NODE_LABEL = "DbOBO"
+# standard for all biokb projects
+ORGANIZATION = "biokb"
+LIBRARY_NAME = f"{ORGANIZATION}_{PROJECT_NAME}"
+HOME = str(Path.home())
+BIOKB_FOLDER = os.path.join(HOME, f".{ORGANIZATION}")
+PROJECT_FOLDER = os.path.join(BIOKB_FOLDER, PROJECT_NAME)
+DATA_FOLDER = os.path.join(PROJECT_FOLDER, "data")
+EXPORT_FOLDER = os.path.join(DATA_FOLDER, "ttls")
+ZIPPED_TTLS_PATH = os.path.join(DATA_FOLDER, "ttls.zip")
+SQLITE_PATH = os.path.join(BIOKB_FOLDER, f"{ORGANIZATION}.db")
+DB_DEFAULT_CONNECTION_STR = "sqlite:///" + SQLITE_PATH
+NEO4J_PASSWORD = "neo4j_password"
+NEO4J_URI = "bolt://localhost:7687"
+NEO4J_USER = "neo4j"
+LOGS_FOLDER = os.path.join(DATA_FOLDER, "logs")  # where to store log files
+TABLE_PREFIX = f"{PROJECT_NAME}_"
+os.makedirs(DATA_FOLDER, exist_ok=True)
+
+# not standard for all biokb projects
+
+URL_DOWNLOAD_TEMPLATE = "http://purl.obolibrary.org/obo/{}.owl"
+
+# files on ftp server in FTP_DIR
+BIOKB_URI = "https://biokb.scai.fraunhofer.de"
+BASE_URI = f"{BIOKB_URI}/obo"
