@@ -61,6 +61,35 @@ class Term(Base):
     xrefs: Mapped[list["XRef"]] = relationship(
         back_populates="term", cascade="all, delete-orphan"
     )
+    
+    children_relationships: Mapped[list["ParentChild"]] = relationship(
+        foreign_keys="[ParentChild.parent_id]",
+        back_populates="parent", 
+        cascade="all, delete-orphan"
+    )
+    parent_relationships: Mapped[list["ParentChild"]] = relationship(
+        foreign_keys="[ParentChild.child_id]",
+        back_populates="child", 
+        cascade="all, delete-orphan"
+    )
+
+
+class ParentChild(Base):
+    __tablename__ = prefix + "parent_child"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    parent_id: Mapped[str] = mapped_column(ForeignKey(prefix + "term.id"))
+    child_id: Mapped[str] = mapped_column(ForeignKey(prefix + "term.id"))
+
+    # TODO: IntegrityError: (pymysql.err.IntegrityError) (1452, 'Cannot add or update a child row: a foreign key constraint fails (`biokb`.`obo_parent_child`, CONSTRAINT `obo_parent_child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `obo_term` (`id`))')
+    # [SQL: INSERT INTO obo_parent_child (parent_id, child_id) VALUES (%(parent_id)s, %(child_id)s)]
+    # relationships
+    parent: Mapped["Term"] = relationship(
+        foreign_keys=[parent_id], back_populates="children_relationships"
+    )
+    child: Mapped["Term"] = relationship(
+        foreign_keys=[child_id], back_populates="parent_relationships"
+    )
 
 
 class Synonym(Base):

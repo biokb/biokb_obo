@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Dict, Optional
 from urllib.request import urlretrieve
 
-from owlready2 import get_ontology
+from owlready2 import ThingClass, get_ontology
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
@@ -78,9 +78,25 @@ class DbManager:
         rebuild: bool = False,
         overwrite=False,
         force_download: bool = False,
-        keep_files: bool = False,
+        delete_files: bool = False,
     ) -> Dict[str, int]:
+        """Import data into the database.
+
+        Args:
+            obo_names (list): List of OBO ontology names to import. If empty, imports all.
+            rebuild (bool): If True, will drop and recreate all tables before import.
+            overwrite (bool): If True, will overwrite existing ontologies in the database.
+            force_download (bool): If True, will force download the data, even if
+                files already exist. If False, it will skip the downloading part if files
+                already exist locally. Defaults to False.
+            delete_files (bool): If True, downloaded files are deleted after import. Defaults to False.
+
+        Returns:
+            Dict[str, int]: table=key and number of inserted=value
+        """
+
         returned_data = defaultdict(int)
+
         if rebuild:
             models.Base.metadata.drop_all(self.__engine)
         models.Base.metadata.create_all(self.__engine)
@@ -139,12 +155,13 @@ class DbManager:
                 synonyms_data = []
                 identifiers_data = []
                 xrefs_data = []
+                parent_child_data = []
 
                 # Parse the ontology
                 for cls in tqdm(onto.classes(), desc="Processing classes"):
                     if hasattr(cls, "label") and cls.label:
-                        term_id = cls.name
-                        name = str(cls.label[0]) if cls.label else term_id
+                        term_id = cls.iri
+                        name = cls.label[0]
                         definition = (
                             str(cls.IAO_0000115[0])
                             if hasattr(cls, "IAO_0000115") and cls.IAO_0000115
@@ -159,6 +176,17 @@ class DbManager:
                                 "ontology_id": ontology.id,
                             }
                         )
+
+                        # Parent-child relationships
+                        for parent in cls.is_a:
+                            if isinstance(parent, ThingClass):
+                                parent_id = parent.iri
+                                parent_child_data.append(
+                                    {
+                                        "parent_id": parent_id,
+                                        "child_id": term_id,
+                                    }
+                                )
 
                         # Extract synonyms
                         if hasattr(cls, "hasExactSynonym"):
@@ -221,8 +249,23 @@ class DbManager:
                 logger.info(f"Found {len(terms_data)} terms")
                 logger.info(f"Inserting data into database...")
 
+                # Filter parent-child relationships to only include terms that exist
+                # in the current import (avoiding foreign key constraint violations)
+                term_ids = {term["id"] for term in terms_data}
+                filtered_parent_child_data = [
+                    pc for pc in parent_child_data
+                    if pc["parent_id"] in term_ids and pc["child_id"] in term_ids
+                ]
+                logger.info(
+                    f"Filtered parent-child relationships from {len(parent_child_data)} "
+                    f"to {len(filtered_parent_child_data)} (only including terms in this import)"
+                )
+
                 # Bulk insert for optimized performance
                 session.bulk_insert_mappings(models.Term.__mapper__, terms_data)
+                session.bulk_insert_mappings(
+                    models.ParentChild.__mapper__, filtered_parent_child_data
+                )
                 session.bulk_insert_mappings(models.Synonym.__mapper__, synonyms_data)
                 session.bulk_insert_mappings(
                     models.Identifier.__mapper__, identifiers_data
@@ -237,7 +280,7 @@ class DbManager:
                 returned_data["identifiers"] += len(identifiers_data)
                 returned_data["xrefs"] += len(xrefs_data)
 
-                if not keep_files:
+                if delete_files:
                     os.remove(owl_file_path)
                     logger.info(f"Removed downloaded file {owl_file_path}")
 
@@ -247,7 +290,7 @@ class DbManager:
 def import_data(
     engine: Optional[Engine] = None,
     force_download: bool = False,
-    keep_files: bool = False,
+    delete_files: bool = False,
 ) -> Dict[str, int]:
     """Import all data in database.
 
@@ -256,14 +299,16 @@ def import_data(
         force_download (bool, optional): If True, will force download the data, even if
             files already exist. If False, it will skip the downloading part if files
             already exist locally. Defaults to False.
-        keep_files (bool, optional): If True, downloaded files are kept after import.
+        delete_files (bool, optional): If True, downloaded files are deleted after import.
             Defaults to False.
 
     Returns:
         Dict[str, int]: table=key and number of inserted=value
     """
     db_manager = DbManager(engine)
-    return db_manager.import_data(force_download=force_download, keep_files=keep_files)
+    return db_manager.import_data(
+        force_download=force_download, delete_files=delete_files
+    )
 
 
 def get_session(engine: Optional[Engine] = None) -> Session:

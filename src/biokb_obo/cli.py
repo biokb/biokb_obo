@@ -36,12 +36,12 @@ def main() -> None:
     help="Force re-download of the source file [default: False]",
 )
 @click.option(
-    "-k",
-    "--keep-files",
+    "-d",
+    "--delete-files",
     is_flag=True,
     type=bool,
     default=False,
-    help="Keep downloaded source files after import [default: False]",
+    help="Delete downloaded source files after import [default: False]",
 )
 @click.option(
     "-c",
@@ -53,18 +53,18 @@ def main() -> None:
 def import_data(
     force_download: bool = False,
     connection_string: str = f"sqlite:///{PROJECT_NAME}.db",
-    keep_files: bool = False,
+    delete_files: bool = False,
 ) -> None:
     """Import data.
 
     Args:
         force_download (bool): Force re-download of the source file (default: False)
         connection_string (str): SQLAlchemy engine URL (default: sqlite:///obo.db)
-        keep_files (bool): Keep downloaded source files after import (default: False)
+        delete_files (bool): Delete downloaded source files after import (default: False)
     """
     engine = create_engine(connection_string)
     DbManager(engine=engine).import_data(
-        force_download=force_download, keep_files=keep_files
+        force_download=force_download, delete_files=delete_files
     )
     click.echo(f"Data imported successfully to {connection_string}")
 
