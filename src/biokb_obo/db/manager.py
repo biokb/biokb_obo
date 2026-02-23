@@ -101,6 +101,8 @@ class DbManager:
             models.Base.metadata.drop_all(self.__engine)
         models.Base.metadata.create_all(self.__engine)
 
+        term_iri_id_dict = {}  # iri: id
+
         with self.session as session:
             for obo_name in obo_names:
                 # check if ontology already exists
@@ -132,7 +134,7 @@ class DbManager:
                 onto = get_ontology(f"file://{owl_file_path}").load()
 
                 ontology = models.Ontology(
-                    id=onto.name,  # Usually 'go'
+                    name=onto.name,  # Usually 'go'
                     iri=onto.base_iri,
                     # Metadata fields in OBO are often lists, so we take the first element
                     version=(
@@ -151,40 +153,39 @@ class DbManager:
                 session.flush()
 
                 # Prepare bulk insert data
-                terms_data = []
                 synonyms_data = []
                 identifiers_data = []
                 xrefs_data = []
                 parent_child_data = []
 
+                term_counter = 0
                 # Parse the ontology
                 for cls in tqdm(onto.classes(), desc="Processing classes"):
                     if hasattr(cls, "label") and cls.label:
-                        term_id = cls.iri
+                        term_counter += 1
                         name = cls.label[0]
                         definition = (
                             str(cls.IAO_0000115[0])
                             if hasattr(cls, "IAO_0000115") and cls.IAO_0000115
                             else None
                         )
-
-                        terms_data.append(
-                            {
-                                "id": term_id,
-                                "name": name,
-                                "definition": definition,
-                                "ontology_id": ontology.id,
-                            }
+                        term = models.Term(
+                            iri=cls.iri,
+                            name=name,
+                            definition=definition,
+                            ontology_id=ontology.id,
                         )
+                        session.add(term)
+                        session.flush()
+                        term_iri_id_dict[cls.iri] = term.id
 
                         # Parent-child relationships
                         for parent in cls.is_a:
                             if isinstance(parent, ThingClass):
-                                parent_id = parent.iri
                                 parent_child_data.append(
                                     {
-                                        "parent_id": parent_id,
-                                        "child_id": term_id,
+                                        "parent_id": parent.iri,
+                                        "child_id": cls.iri,
                                     }
                                 )
 
@@ -193,7 +194,7 @@ class DbManager:
                             for syn in cls.hasExactSynonym:
                                 synonyms_data.append(
                                     {
-                                        "term_id": term_id,
+                                        "term_id": term.id,
                                         "synonym": str(syn),
                                         "type": "exact",
                                     }
@@ -202,7 +203,7 @@ class DbManager:
                             for syn in cls.hasRelatedSynonym:
                                 synonyms_data.append(
                                     {
-                                        "term_id": term_id,
+                                        "term_id": term.id,
                                         "synonym": str(syn),
                                         "type": "related",
                                     }
@@ -211,7 +212,7 @@ class DbManager:
                             for syn in cls.hasNarrowSynonym:
                                 synonyms_data.append(
                                     {
-                                        "term_id": term_id,
+                                        "term_id": term.id,
                                         "synonym": str(syn),
                                         "type": "narrow",
                                     }
@@ -220,7 +221,7 @@ class DbManager:
                             for syn in cls.hasBroadSynonym:
                                 synonyms_data.append(
                                     {
-                                        "term_id": term_id,
+                                        "term_id": term.id,
                                         "synonym": str(syn),
                                         "type": "broad",
                                     }
@@ -233,7 +234,7 @@ class DbManager:
                                     database, ref_id = xref.split(":", 1)
                                     xrefs_data.append(
                                         {
-                                            "term_id": term_id,
+                                            "term_id": term.id,
                                             "database": database,
                                             "reference_id": ref_id,
                                         }
@@ -243,18 +244,22 @@ class DbManager:
                         if hasattr(cls, "hasAlternativeId"):
                             for alt_id in cls.hasAlternativeId:
                                 identifiers_data.append(
-                                    {"term_id": term_id, "identifier": str(alt_id)}
+                                    {"term_id": term.id, "identifier": str(alt_id)}
                                 )
 
-                logger.info(f"Found {len(terms_data)} terms")
+                logger.info(f"Found {term_counter} terms")
                 logger.info(f"Inserting data into database...")
 
                 # Filter parent-child relationships to only include terms that exist
                 # in the current import (avoiding foreign key constraint violations)
-                term_ids = {term["id"] for term in terms_data}
                 filtered_parent_child_data = [
-                    pc for pc in parent_child_data
-                    if pc["parent_id"] in term_ids and pc["child_id"] in term_ids
+                    {
+                        "parent_id": term_iri_id_dict[pc["parent_id"]],
+                        "child_id": term_iri_id_dict[pc["child_id"]],
+                    }
+                    for pc in parent_child_data
+                    if pc["parent_id"] in term_iri_id_dict
+                    and pc["child_id"] in term_iri_id_dict
                 ]
                 logger.info(
                     f"Filtered parent-child relationships from {len(parent_child_data)} "
@@ -262,7 +267,6 @@ class DbManager:
                 )
 
                 # Bulk insert for optimized performance
-                session.bulk_insert_mappings(models.Term.__mapper__, terms_data)
                 session.bulk_insert_mappings(
                     models.ParentChild.__mapper__, filtered_parent_child_data
                 )
@@ -275,7 +279,7 @@ class DbManager:
                 session.commit()
                 session.close()
 
-                returned_data["terms"] += len(terms_data)
+                returned_data["terms"] += term_counter
                 returned_data["synonyms"] += len(synonyms_data)
                 returned_data["identifiers"] += len(identifiers_data)
                 returned_data["xrefs"] += len(xrefs_data)

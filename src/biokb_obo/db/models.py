@@ -13,7 +13,8 @@ class Base(DeclarativeBase):
 class Ontology(Base):
     __tablename__ = prefix + "ontology"
 
-    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255))
     title: Mapped[str | None] = mapped_column(String(500))
     iri: Mapped[str | None] = mapped_column(String(500))
     version: Mapped[str | None] = mapped_column(String(100))
@@ -43,7 +44,8 @@ class Term(Base):
 
     __tablename__ = prefix + "term"
 
-    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    iri: Mapped[str] = mapped_column(String(255), index=True)
     name: Mapped[str] = mapped_column(String(500))
     definition: Mapped[str | None] = mapped_column(Text)
 
@@ -61,16 +63,16 @@ class Term(Base):
     xrefs: Mapped[list["XRef"]] = relationship(
         back_populates="term", cascade="all, delete-orphan"
     )
-    
+
     children_relationships: Mapped[list["ParentChild"]] = relationship(
         foreign_keys="[ParentChild.parent_id]",
-        back_populates="parent", 
-        cascade="all, delete-orphan"
+        back_populates="parent",
+        cascade="all, delete-orphan",
     )
     parent_relationships: Mapped[list["ParentChild"]] = relationship(
         foreign_keys="[ParentChild.child_id]",
-        back_populates="child", 
-        cascade="all, delete-orphan"
+        back_populates="child",
+        cascade="all, delete-orphan",
     )
 
 
@@ -78,8 +80,8 @@ class ParentChild(Base):
     __tablename__ = prefix + "parent_child"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    parent_id: Mapped[str] = mapped_column(ForeignKey(prefix + "term.id"))
-    child_id: Mapped[str] = mapped_column(ForeignKey(prefix + "term.id"))
+    parent_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
+    child_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
 
     # TODO: IntegrityError: (pymysql.err.IntegrityError) (1452, 'Cannot add or update a child row: a foreign key constraint fails (`biokb`.`obo_parent_child`, CONSTRAINT `obo_parent_child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `obo_term` (`id`))')
     # [SQL: INSERT INTO obo_parent_child (parent_id, child_id) VALUES (%(parent_id)s, %(child_id)s)]
@@ -96,7 +98,7 @@ class Synonym(Base):
     __tablename__ = prefix + "synonym"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    term_id: Mapped[str] = mapped_column(ForeignKey(prefix + "term.id"))
+    term_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
     synonym: Mapped[str] = mapped_column(String(500))
     type: Mapped[str | None] = mapped_column(String(100))
     term: Mapped["Term"] = relationship(back_populates="synonyms")
@@ -106,7 +108,7 @@ class Identifier(Base):
     __tablename__ = prefix + "identifier"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    term_id: Mapped[str] = mapped_column(ForeignKey(prefix + "term.id"))
+    term_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
     identifier: Mapped[str] = mapped_column(String(255))
 
     term: Mapped["Term"] = relationship(back_populates="identifiers")
@@ -116,7 +118,7 @@ class XRef(Base):
     __tablename__ = prefix + "xref"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    term_id: Mapped[str] = mapped_column(ForeignKey(prefix + "term.id"))
+    term_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
     database: Mapped[str] = mapped_column(String(100))
     reference_id: Mapped[str] = mapped_column(String(255))
 
