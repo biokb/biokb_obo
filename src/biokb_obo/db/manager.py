@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from urllib.request import urlretrieve
 
 from owlready2 import ThingClass, get_ontology
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, delete, or_, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from tqdm import tqdm
@@ -99,6 +99,7 @@ class DbManager:
 
         if rebuild:
             models.Base.metadata.drop_all(self.__engine)
+            logger.info("Rebuild obo tables")
         models.Base.metadata.create_all(self.__engine)
 
         term_iri_id_dict = {}  # iri: id
@@ -106,9 +107,14 @@ class DbManager:
         with self.session as session:
             for obo_name in obo_names:
                 # check if ontology already exists
+                stmt_exists = (
+                    select(models.Ontology)
+                    .where(models.Ontology.name == obo_name)
+                    .limit(1)
+                )
                 existing_ontology: models.Ontology | None = (
                     session.query(models.Ontology)
-                    .filter(models.Ontology.id == obo_name)
+                    .filter(models.Ontology.name == obo_name)
                     .first()
                 )
 
@@ -123,9 +129,43 @@ class DbManager:
                         f"Overwriting existing ontology {obo_name} in the database."
                     )
 
-                    session.query(models.Ontology).filter(
-                        models.Ontology.id == obo_name
-                    ).delete()
+                    term_ids_subquery = select(models.Term.id).where(
+                        models.Term.ontology_id == existing_ontology.id
+                    )
+
+                    session.execute(
+                        delete(models.ParentChild).where(
+                            or_(
+                                models.ParentChild.parent_id.in_(term_ids_subquery),
+                                models.ParentChild.child_id.in_(term_ids_subquery),
+                            )
+                        )
+                    )
+                    session.execute(
+                        delete(models.Synonym).where(
+                            models.Synonym.term_id.in_(term_ids_subquery)
+                        )
+                    )
+                    session.execute(
+                        delete(models.Identifier).where(
+                            models.Identifier.term_id.in_(term_ids_subquery)
+                        )
+                    )
+                    session.execute(
+                        delete(models.XRef).where(
+                            models.XRef.term_id.in_(term_ids_subquery)
+                        )
+                    )
+                    session.execute(
+                        delete(models.Term).where(
+                            models.Term.ontology_id == existing_ontology.id
+                        )
+                    )
+                    session.execute(
+                        delete(models.Ontology).where(
+                            models.Ontology.id == existing_ontology.id
+                        )
+                    )
                     session.commit()
                 logger.info("Parsing ontology: %s", obo_name)
                 owl_file_path = self.__download_data(
@@ -134,9 +174,8 @@ class DbManager:
                 onto = get_ontology(f"file://{owl_file_path}").load()
 
                 ontology = models.Ontology(
-                    name=onto.name,  # Usually 'go'
+                    name=onto.name,
                     iri=onto.base_iri,
-                    # Metadata fields in OBO are often lists, so we take the first element
                     version=(
                         onto.metadata.versionInfo[0]
                         if onto.metadata.versionInfo

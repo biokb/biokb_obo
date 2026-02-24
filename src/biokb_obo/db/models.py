@@ -24,7 +24,7 @@ class Ontology(Base):
 
     # relationships
     terms: Mapped[list["Term"]] = relationship(
-        back_populates="ontology", cascade="all, delete-orphan"
+        back_populates="ontology", cascade="all, delete-orphan", passive_deletes=True
     )
 
 
@@ -53,26 +53,30 @@ class Term(Base):
     ontology_id: Mapped[str] = mapped_column(ForeignKey(prefix + "ontology.id"))
 
     # relationships
-    ontology: Mapped["Ontology"] = relationship(back_populates="terms")
+    ontology: Mapped["Ontology"] = relationship(
+        back_populates="terms", passive_deletes=True
+    )
     synonyms: Mapped[list["Synonym"]] = relationship(
-        back_populates="term", cascade="all, delete-orphan"
+        back_populates="term", cascade="all, delete-orphan", passive_deletes=True
     )
     identifiers: Mapped[list["Identifier"]] = relationship(
-        back_populates="term", cascade="all, delete-orphan"
+        back_populates="term", cascade="all, delete-orphan", passive_deletes=True
     )
     xrefs: Mapped[list["XRef"]] = relationship(
-        back_populates="term", cascade="all, delete-orphan"
+        back_populates="term", cascade="all, delete-orphan", passive_deletes=True
     )
 
     children_relationships: Mapped[list["ParentChild"]] = relationship(
         foreign_keys="[ParentChild.parent_id]",
         back_populates="parent",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     parent_relationships: Mapped[list["ParentChild"]] = relationship(
         foreign_keys="[ParentChild.child_id]",
         back_populates="child",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
