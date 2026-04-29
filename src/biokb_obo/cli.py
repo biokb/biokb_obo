@@ -1,13 +1,16 @@
 import os
+from typing import Optional
 
 import click
 from sqlalchemy import create_engine
+from tqdm import cli
 
 from biokb_obo import __version__
 
 # from biokb_obo.api.main import run_server
 from biokb_obo.constants import NEO4J_USER, PROJECT_NAME
 from biokb_obo.db.manager import DbManager
+from biokb_obo.tools import get_engine
 
 # from biokb_obo.rdf.neo4j_importer import Neo4jImporter
 # from biokb_obo.rdf.turtle import TurtleCreator
@@ -50,10 +53,18 @@ def main() -> None:
     default=f"sqlite:///{PROJECT_NAME}.db",
     help=f"SQLAlchemy engine URL [default: sqlite:///{PROJECT_NAME}.db]",
 )
+@click.option(
+    "-e",
+    "--env",
+    type=str,
+    default=None,
+    help="Environment file to load for configuration (default: None)",
+)
 def import_data(
-    force_download: bool = False,
-    connection_string: str = f"sqlite:///{PROJECT_NAME}.db",
+    force_download: bool,
+    connection_string: Optional[str],
     delete_files: bool = False,
+    env: Optional[str] = None,
 ) -> None:
     """Import data.
 
@@ -62,11 +73,13 @@ def import_data(
         connection_string (str): SQLAlchemy engine URL (default: sqlite:///obo.db)
         delete_files (bool): Delete downloaded source files after import (default: False)
     """
-    engine = create_engine(connection_string)
+    engine = get_engine(
+        connection_string=connection_string,
+        env=env,
+    )
     DbManager(engine=engine).import_data(
         force_download=force_download, delete_files=delete_files
     )
-    click.echo(f"Data imported successfully to {connection_string}")
 
 
 # @main.command("create-ttls")
