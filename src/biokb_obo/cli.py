@@ -23,7 +23,7 @@ def main() -> None:
 
     Please follow the steps:\n
     1. Import data using `import-data` command.\n
-    2. Create TTL files using `create-ttls` command.\n
+    2. Create TTL files using `create-turtles` command.\n
     3. Import TTL files into Neo4j using `import-neo4j` command.\n
     """
     pass
@@ -82,7 +82,7 @@ def import_data(
     )
 
 
-# @main.command("create-ttls")
+# @main.command("create-turtles")
 # @click.option(
 #     "-c",
 #     "--connection-string",
@@ -90,13 +90,13 @@ def import_data(
 #     default=f"sqlite:///{PROJECT_NAME}.db",
 #     help=f"SQLAlchemy engine URL [default: sqlite:///{PROJECT_NAME}.db]",
 # )
-# def create_ttls(connection_string: str = f"sqlite:///{PROJECT_NAME}.db") -> None:
+# def create_turtles(connection_string: str = f"sqlite:///{PROJECT_NAME}.db") -> None:
 #     """Create TTL files from local database.
 
 #     Args:
 #         connection_string (str): SQLAlchemy engine URL
 #     """
-#     path_to_zip = TurtleCreator(create_engine(connection_string)).create_ttls()
+#     path_to_zip = TurtleCreator(create_engine(connection_string)).create_turtles()
 #     click.echo(
 #         f"Path to the zip file containing all generated Turtle files. {path_to_zip}"
 #     )
@@ -117,7 +117,7 @@ def import_data(
 #     password: str, uri: str = "bolt://localhost:7687", user: str = NEO4J_USER
 # ) -> None:
 #     """Import TTL files into Neo4j database."""
-#     Neo4jImporter(neo4j_uri=uri, neo4j_user=user, neo4j_pwd=password).import_ttls()
+#     Neo4jImporter(neo4j_uri=uri, neo4j_user=user, neo4j_pwd=password).import_neo4j()
 
 
 # @main.command("run-api")

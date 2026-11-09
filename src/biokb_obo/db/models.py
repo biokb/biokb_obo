@@ -1,6 +1,4 @@
-from sys import prefix
-
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 prefix = "obo_"
@@ -46,7 +44,7 @@ class Term(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     iri: Mapped[str] = mapped_column(String(255), index=True)
-    name: Mapped[str] = mapped_column(String(500))
+    name: Mapped[str] = mapped_column(String(length=1024))
     definition: Mapped[str | None] = mapped_column(Text)
 
     # foreign key
@@ -78,6 +76,18 @@ class Term(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    outgoing_relations: Mapped[list["Relation"]] = relationship(
+        foreign_keys="[Relation.subject_id]",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    incoming_relations: Mapped[list["Relation"]] = relationship(
+        foreign_keys="[Relation.object_id]",
+        back_populates="object",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class ParentChild(Base):
@@ -98,12 +108,53 @@ class ParentChild(Base):
     )
 
 
+class RelationType(Base):
+    __tablename__ = prefix + "relation_type"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    iri: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+
+    relations: Mapped[list["Relation"]] = relationship(
+        back_populates="relation_type",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class Relation(Base):
+    __tablename__ = prefix + "relation"
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_id",
+            "object_id",
+            "relation_type_id",
+            name="uq_obo_relation_subject_object_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
+    object_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
+    relation_type_id: Mapped[int] = mapped_column(
+        ForeignKey(prefix + "relation_type.id")
+    )
+
+    subject: Mapped["Term"] = relationship(
+        foreign_keys=[subject_id], back_populates="outgoing_relations"
+    )
+    object: Mapped["Term"] = relationship(
+        foreign_keys=[object_id], back_populates="incoming_relations"
+    )
+    relation_type: Mapped["RelationType"] = relationship(back_populates="relations")
+
+
 class Synonym(Base):
     __tablename__ = prefix + "synonym"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     term_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
-    synonym: Mapped[str] = mapped_column(String(500))
+    synonym: Mapped[str] = mapped_column(Text)
     type: Mapped[str | None] = mapped_column(String(100))
     term: Mapped["Term"] = relationship(back_populates="synonyms")
 
@@ -125,5 +176,6 @@ class XRef(Base):
     term_id: Mapped[int] = mapped_column(ForeignKey(prefix + "term.id"))
     database: Mapped[str] = mapped_column(String(100))
     reference_id: Mapped[str] = mapped_column(String(255))
+    uri: Mapped[str | None] = mapped_column(String(1000))
 
     term: Mapped["Term"] = relationship(back_populates="xrefs")

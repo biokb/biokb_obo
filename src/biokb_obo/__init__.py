@@ -2,8 +2,8 @@ from importlib.metadata import PackageNotFoundError, version
 
 from biokb_obo.db.manager import DbManager, get_session, import_data
 
-# from biokb_obo.rdf.neo4j_importer import Neo4jImporter, import_ttls
-# from biokb_obo.rdf.turtle import TurtleCreator, create_ttls
+# from biokb_obo.rdf.neo4j_importer import Neo4jImporter, import_neo4j
+# from biokb_obo.rdf.turtle import TurtleCreator, create_turtles
 
 try:
     __version__ = version("biokb_obo")
@@ -16,7 +16,7 @@ __all__ = [
     "import_data",
     "get_session",
     # "Neo4jImporter",
-    # "import_ttls",
+    # "import_neo4j",
     # "TurtleCreator",
-    # "create_ttls",
+    # "create_turtles",
 ]

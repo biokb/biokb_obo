@@ -9,16 +9,6 @@ from typing import AsyncGenerator, List
 import jellyfish
 import Levenshtein
 import uvicorn
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from sqlalchemy import Engine, create_engine, func, or_, select
-from sqlalchemy.orm import Session, aliased
-
-# from database import SessionLocal
-from sqlalchemy.sql import text
-
 from biokb_ipni.api import schemas
 from biokb_ipni.api.query_tools import SASearchResults, build_dynamic_query
 from biokb_ipni.api.tags import Tag
@@ -32,6 +22,15 @@ from biokb_ipni.constants import (
 from biokb_ipni.db import manager, models
 from biokb_ipni.rdf.neo4j_importer import Neo4jImporter
 from biokb_ipni.rdf.turtle import TurtleCreator
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from sqlalchemy import Engine, create_engine, func, or_, select
+from sqlalchemy.orm import Session, aliased
+
+# from database import SessionLocal
+from sqlalchemy.sql import text
 
 # Configure logging
 logging.basicConfig(
@@ -181,7 +180,7 @@ async def get_report(
     file_path = ZIPPED_TTLS_PATH
     if not os.path.exists(file_path) or force_create:
         try:
-            TurtleCreator().create_ttls()
+            TurtleCreator().create_turtles()
         except Exception as e:
             logger.error(f"Error generating TTL files: {e}")
             raise HTTPException(
@@ -223,7 +222,7 @@ async def import_neo4j(
                 ),
             )
         importer = Neo4jImporter(neo4j_uri=uri, neo4j_user=user, neo4j_pwd=password)
-        importer.import_ttls()
+        importer.import_neo4j()
     except Exception as e:
         logger.error(f"Error importing data into Neo4j: {e}")
         raise HTTPException(

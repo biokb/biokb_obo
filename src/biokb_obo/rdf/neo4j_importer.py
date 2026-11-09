@@ -1,5 +1,6 @@
 import logging
 import zipfile
+from contextlib import ExitStack
 from os import getenv, listdir, path
 from typing import LiteralString, cast
 
@@ -8,7 +9,7 @@ from rdflib import Graph
 from rdflib_neo4j import HANDLE_VOCAB_URI_STRATEGY, Neo4jStore, Neo4jStoreConfig
 from tqdm import tqdm
 
-from biokb_ipni.constants import (
+from biokb_obo.constants import (
     BASIC_NODE_LABEL,
     NEO4J_PASSWORD,
     NEO4J_URI,
@@ -24,7 +25,6 @@ logger.addHandler(logging.NullHandler())
 
 
 class Neo4jImporter:
-
     def __init__(
         self,
         neo4j_uri: str | None = None,
@@ -75,10 +75,8 @@ class Neo4jImporter:
                 DETACH DELETE n
                 }} IN TRANSACTIONS OF 1000 ROWS;"""
             cypher = cast(LiteralString, cypher)
-            session.run(cypher)
-            session.run(
-                "MATCH (n:Resource) WHERE NOT (n)--() DELETE n"
-            )  # delete orphaned nodes
+            session.run(cypher).consume()
+            session.run("MATCH (n:Resource) WHERE NOT (n)--() DELETE n").consume()
 
     def import_ttl(self, path_or_list: str | list[str]) -> bool:
         """Import single turtle file in Neo4J.
@@ -93,26 +91,36 @@ class Neo4jImporter:
         """
         logger.info("Start importing all turtle file in Neo4J.")
         self._delete_nodes_with_label()
-        neo4j_db = self.__get_neo4j_db()
 
-        if isinstance(path_or_list, list):
-            for p in path_or_list:
-                neo4j_db.parse(p, format="ttl")
-        elif path_or_list.endswith(".ttl"):
-            neo4j_db.parse(path_or_list, format="ttl")
-        elif path.isdir(path_or_list):
-            ttl_files = [
-                path.join(path_or_list, f)
-                for f in listdir(path_or_list)
-                if f.endswith(".ttl")
-            ]
-            with tqdm(ttl_files) as pbar:
-                for ttl_file in pbar:
-                    pbar.set_description(f"Processing {ttl_file}")
-                    neo4j_db.parse(ttl_file, format="ttl")
-        elif path_or_list.endswith(".zip"):
-            self.__import_turtle_files_from_zip(path_or_list, neo4j_db)
-        neo4j_db.close(True)
+        with ExitStack() as stack:
+            # Callbacks run in reverse order: graph first, then driver. Errors
+            # propagate to the caller after the resources are released.
+            stack.callback(self.driver.close)
+            neo4j_db = self.__get_neo4j_db()
+            stack.callback(neo4j_db.close, True)
+
+            if isinstance(path_or_list, list):
+                for p in path_or_list:
+                    neo4j_db.parse(p, format="ttl")
+            elif path_or_list.endswith(".ttl"):
+                neo4j_db.parse(path_or_list, format="ttl")
+            elif path.isdir(path_or_list):
+                ttl_files = [
+                    path.join(path_or_list, f)
+                    for f in listdir(path_or_list)
+                    if f.endswith(".ttl")
+                ]
+                with tqdm(ttl_files) as pbar:
+                    for ttl_file in pbar:
+                        pbar.set_description(f"Processing {ttl_file}")
+                        neo4j_db.parse(ttl_file, format="ttl")
+            elif path_or_list.endswith(".zip"):
+                self.__import_turtle_files_from_zip(path_or_list, neo4j_db)
+            else:
+                raise ValueError(
+                    f"Unsupported import source: {path_or_list!r}. "
+                    "Expected a .ttl file, a .zip file, a directory or a list of files."
+                )
 
         return True
 
@@ -139,8 +147,7 @@ class Neo4jImporter:
                 "CREATE CONSTRAINT n10s_unique_uri IF NOT EXISTS "
                 "FOR (r:Resource) REQUIRE r.uri IS UNIQUE"
             )
-            session.run(cypher)
-            self.driver.close()
+            session.run(cypher).consume()
 
         auth_data = {
             "uri": self.neo4j_uri,
@@ -159,7 +166,7 @@ class Neo4jImporter:
         neo4j_db = Graph(store=Neo4jStore(config=config))
         return neo4j_db
 
-    def import_ttls(self, delete_existing_graph: bool = True) -> bool:
+    def import_neo4j(self, delete_existing_graph: bool = False) -> bool:
         """Import all turtle file in Neo4J from zipped turtle files.
 
         Args:
@@ -170,15 +177,17 @@ class Neo4jImporter:
 
         if delete_existing_graph:
             self._delete_nodes_with_label()
-        neo4j_db = self.__get_neo4j_db()
 
-        self.__import_turtle_files_from_zip(ZIPPED_TTLS_PATH, neo4j_db)
-        neo4j_db.close(True)
+        with ExitStack() as stack:
+            stack.callback(self.driver.close)
+            neo4j_db = self.__get_neo4j_db()
+            stack.callback(neo4j_db.close, True)
+            self.__import_turtle_files_from_zip(ZIPPED_TTLS_PATH, neo4j_db)
 
         return True
 
 
-def import_ttls(
+def import_neo4j(
     neo4j_uri: str | None = None,
     neo4j_user: str | None = None,
     neo4j_pwd: str | None = None,
@@ -197,5 +206,5 @@ def import_ttls(
     importer = Neo4jImporter(
         neo4j_uri=neo4j_uri, neo4j_user=neo4j_user, neo4j_pwd=neo4j_pwd
     )
-    result: bool = importer.import_ttls(delete_existing_graph=delete_existing_graph)
+    result: bool = importer.import_neo4j(delete_existing_graph=delete_existing_graph)
     return result

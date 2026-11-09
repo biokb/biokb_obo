@@ -2,15 +2,15 @@ import logging
 import os.path
 import re
 import shutil
-from typing import List, Optional, TypeVar
+from typing import Optional, TypeVar
 
 from rdflib import RDF, XSD, Graph, Literal, Namespace, URIRef
-from sqlalchemy import Engine, and_, create_engine, or_, select, text
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
 from biokb_obo import constants
-from biokb_obo.constants import BASIC_NODE_LABEL, EXPORT_FOLDER
+from biokb_obo.constants import EXPORT_FOLDER
 from biokb_obo.db import models
 from biokb_obo.rdf import namespaces
 
@@ -40,17 +40,42 @@ def get_empty_graph() -> Graph:
     graph.bind(prefix="rel", namespace=namespaces.REL_NS)
     graph.bind(prefix="xs", namespace=XSD)
     graph.bind(prefix="n", namespace=namespaces.NODE_NS)
-    graph.bind(prefix="ncbi", namespace=namespaces.NCBI_TAXON_NS)
     graph.bind(prefix="a", namespace=namespaces.NAME_NS)
-    graph.bind(prefix="f", namespace=namespaces.FAMILY_NS)
+    graph.bind(prefix="obo", namespace=namespaces.OBO_NS)
+    graph.bind(prefix="hgnc", namespace=namespaces.HGNC_NS)
+    graph.bind(prefix="ncbi", namespace=namespaces.NCBIGENE_NS)
 
     return graph
+
+
+def get_uri_ref(iri: str) -> URIRef:
+    """Generate a URIRef for a given IRI string."""
+    return URIRef(iri)
+
+
+def get_resource_label(iri: str) -> str:
+    """Return the node label of the resource a term belongs to.
+
+    The resource is taken from the term's own IRI, not from the ontology file it
+    was imported with, so a CHEBI class inside GO-plus is labeled ``DbChebi``.
+
+    Examples:
+        ``http://purl.obolibrary.org/obo/GO_0008150`` -> ``DbGo``
+        ``http://purl.obolibrary.org/obo/CHEBI_15377`` -> ``DbChebi``
+        ``http://identifiers.org/hgnc/5`` -> ``DbHgnc``
+    """
+    obo_base = str(namespaces.OBO_NS)
+    if iri.startswith(obo_base):
+        resource = re.split(r"[_#]", iri[len(obo_base) :])[0]
+    else:
+        resource = iri.rstrip("/").rsplit("/", 2)[-2]
+    return "Db" + re.sub(r"[^A-Za-z0-9]", "", resource).capitalize()
 
 
 class TurtleCreator:
     """Factory class for generating RDF Turtle files from OBO database."""
 
-    pass
+    pass  # noqa: PIE790
 
     def __init__(
         self,
@@ -70,261 +95,128 @@ class TurtleCreator:
         """
         self.__ttls_folder = export_to_folder
 
-    def create_ttls(self) -> str:
+    def create_turtles(self) -> str:
         """Generate RDF Turtle files from the database.
         Returns:
             Path to the zip file containing all generated Turtle files.
         """
-        logging.info("Starting turtle file generation process.")
+        logger.info("Starting turtle file generation process.")
         os.makedirs(self.__ttls_folder, exist_ok=True)
-        self._create_families()
-        self._create_locations()
-        self._create_name_relations()
-        self._create_names()
+        self._create_nodes()
+        self._create_parent_child()
+        self._create_relations()
 
         # Package everything into a zip file
         path_to_zip_file: str = self._create_zip_from_all_ttls()
-        logging.info(f"Turtle files successfully packaged in {path_to_zip_file}")
+        logger.info(f"Turtle files successfully packaged in {path_to_zip_file}")
         return path_to_zip_file
 
-    def _create_families(self) -> None:
-        logging.info("Creating RDF families turtle file.")
+    def _create_nodes(self) -> None:
+        logger.info("Creating RDF terms turtle file.")
 
         graph = get_empty_graph()
 
         with self.Session() as session:
-            # Query all families
-            families: List[models.Family] = session.query(models.Family).all()
+            # Query all terms
+            terms: list[models.Term] = session.query(models.Term).all()
 
-            for family in tqdm(families, desc="Creating families triples"):
-                family_entity: URIRef = namespaces.FAMILY_NS[str(family.id)]
+            for term in tqdm(terms, desc="Creating terms triples"):
+                term_entity: URIRef = get_uri_ref(term.iri)
                 # Add type declarations
                 graph.add(
                     triple=(
-                        family_entity,
+                        term_entity,
                         RDF.type,
-                        namespaces.NODE_NS[models.Family.__name__],
+                        namespaces.NODE_NS[models.Term.__name__],
+                    )
+                )
+                if term.iri.startswith("http://purl.obolibrary.org/obo/"):
+                    graph.add(
+                        triple=(
+                            term_entity,
+                            RDF.type,
+                            namespaces.NODE_NS["OBO"],
+                        )
+                    )
+                graph.add(
+                    triple=(
+                        term_entity,
+                        RDF.type,
+                        namespaces.NODE_NS[get_resource_label(term.iri)],
                     )
                 )
                 graph.add(
                     triple=(
-                        family_entity,
-                        RDF.type,
-                        namespaces.NODE_NS[BASIC_NODE_LABEL],
-                    )
-                )
-                graph.add(
-                    triple=(
-                        family_entity,
+                        term_entity,
                         namespaces.REL_NS["name"],
-                        Literal(family.family, datatype=XSD.string),
+                        Literal(term.name, datatype=XSD.string),
                     )
                 )
-        ttl_path = os.path.join(
-            self.__ttls_folder, f"{models.Family.__tablename__}.ttl"
-        )
+        ttl_path = os.path.join(self.__ttls_folder, f"{models.Term.__tablename__}.ttl")
         graph.serialize(ttl_path, format="turtle")
         del graph
 
-    def _create_locations(self) -> None:
-        # using type_material to extract locations
-        logging.info("Creating RDF location turtle file.")
-        graph = get_empty_graph()
-        with self.Session() as session:
-            locations = (
-                session.query(models.Location)
-                .where(
-                    or_(
-                        models.Location.locality.is_not(None),
-                        and_(
-                            models.Location.latitude.is_not(None),
-                            models.Location.longitude.is_not(None),
-                        ),
-                    )
-                )
-                .all()
-            )
-
-            # Query all type_materials
-            for location in locations:
-                location_entity: URIRef = namespaces.LOCATION_NS[str(location.id)]
-
-                # Add type declarations
-                graph.add(
-                    triple=(
-                        location_entity,
-                        RDF.type,
-                        namespaces.NODE_NS["Location"],
-                    )
-                )
-                graph.add(
-                    triple=(
-                        location_entity,
-                        RDF.type,
-                        namespaces.NODE_NS[BASIC_NODE_LABEL],
-                    )
-                )
-                if location.locality:
-                    graph.add(
-                        triple=(
-                            location_entity,
-                            namespaces.REL_NS["locality"],
-                            Literal(location.locality, datatype=XSD.string),
-                        )
-                    )
-                if location.latitude and location.longitude:
-                    graph.add(
-                        triple=(
-                            location_entity,
-                            namespaces.REL_NS["latitude"],
-                            Literal(location.latitude, datatype=XSD.float),
-                        )
-                    )
-                    graph.add(
-                        triple=(
-                            location_entity,
-                            namespaces.REL_NS["longitude"],
-                            Literal(location.longitude, datatype=XSD.float),
-                        )
-                    )
-
-            stmt = (
-                select(models.TypeMaterial.name_id, models.TypeMaterial.location_id)
-                .select_from(models.TypeMaterial)
-                .join(models.Location)
-                .where(
-                    or_(
-                        models.Location.locality.is_not(None),
-                        and_(
-                            models.Location.latitude.is_not(None),
-                            models.Location.longitude.is_not(None),
-                        ),
-                    )
-                )
-            )
-            for name_id, location_id in session.execute(stmt).all():
-                name_entity: URIRef = namespaces.NAME_NS[str(name_id)]
-                location_entity: URIRef = namespaces.LOCATION_NS[str(location_id)]
-                graph.add(
-                    triple=(
-                        name_entity,
-                        namespaces.REL_NS["HAS_LOCATION"],
-                        location_entity,
-                    )
-                )
-
-        ttl_path = os.path.join(self.__ttls_folder, f"ipni_location.ttl")
-        graph.serialize(ttl_path, format="turtle")
-        del graph
-
-    def _create_name_relations(self) -> None:
-        logging.info("Creating name relations file.")
+    def _create_parent_child(self) -> None:
+        logger.info("Creating parent-child relations file.")
 
         graph = get_empty_graph()
 
         with self.Session() as session:
-            # Query all name relations
-            name_relations: List[models.NameRelation] = session.query(
-                models.NameRelation
+            # Query all parent-child relations
+            parent_child_relations: list[models.ParentChild] = session.query(
+                models.ParentChild
             ).all()
 
-            for relation in tqdm(name_relations, desc="Creating name relation triples"):
-                subject_entity: URIRef = namespaces.NAME_NS[
-                    str(relation.related_name_id)
-                ]
-                object_entity: URIRef = namespaces.NAME_NS[str(relation.name_id)]
+            for relation in tqdm(
+                parent_child_relations, desc="Creating parent-child triples"
+            ):
+                child: URIRef = get_uri_ref(relation.child.iri)
+                parent: URIRef = get_uri_ref(relation.parent.iri)
 
-                if re.search(r"^[A-Z_]+$", relation.type):
-                    relation_name_suffix = relation.type
-                else:
-                    relation_name_suffix = (
-                        re.sub(r"([A-Z])", r"_\1", relation.type).strip("_").upper()
-                    )
                 graph.add(
                     triple=(
-                        subject_entity,
-                        namespaces.REL_NS[f"HAS_{relation_name_suffix}"],
-                        object_entity,
+                        child,
+                        namespaces.REL_NS["IS_A"],
+                        parent,
                     )
                 )
+
         ttl_path = os.path.join(
-            self.__ttls_folder, f"{models.NameRelation.__tablename__}.ttl"
+            self.__ttls_folder, f"{models.ParentChild.__tablename__}.ttl"
         )
         graph.serialize(ttl_path, format="turtle")
         del graph
 
-    def _create_names(self) -> None:
-        logging.info("Creating RDF names turtle file.")
+    @staticmethod
+    def _format_relation_name(name: str) -> str:
+        """Normalize a relation name for use as an RDF predicate local name."""
+        return (
+            re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9]+", "_", name)).strip("_").upper()
+        )
 
-        with self.__engine.connect() as conn:
-            # Query all names
-            result = conn.execution_options(stream_results=True).execute(
-                text(f"SELECT * FROM {models.Name.__tablename__}")
-            )
-            file_counter = 0
-            while True:
-                names = result.fetchmany(100_000)
-                if not names:
-                    break
+    def _create_relations(self) -> None:
+        logger.info("Creating domain-specific relations file.")
 
-                file_counter += 1
-                graph = get_empty_graph()
-                for name in names:
+        graph = get_empty_graph()
 
-                    name_entity: URIRef = namespaces.NAME_NS[str(name.id)]
-                    # Add type declarations
-                    graph.add(
-                        triple=(
-                            name_entity,
-                            RDF.type,
-                            namespaces.NODE_NS[models.Name.__name__],
-                        )
-                    )
-                    graph.add(
-                        triple=(
-                            name_entity,
-                            RDF.type,
-                            namespaces.NODE_NS[BASIC_NODE_LABEL],
-                        )
-                    )
-                    graph.add(
-                        triple=(
-                            name_entity,
-                            namespaces.REL_NS["name"],
-                            Literal(name.scientific_name, datatype=XSD.string),
-                        )
-                    )
-                    if name.tax_id:
-                        graph.add(
-                            triple=(
-                                name_entity,
-                                namespaces.REL_NS["SAME_AS"],
-                                namespaces.NCBI_TAXON_NS[str(name.tax_id)],
-                            )
-                        )
-                    graph.add(
-                        triple=(
-                            name_entity,
-                            namespaces.REL_NS["rank"],
-                            Literal(name.rank, datatype=XSD.string),
-                        )
-                    )
-                    # add relation to family
-                    if name.family_id:
-                        graph.add(
-                            triple=(
-                                name_entity,
-                                namespaces.REL_NS["HAS_FAMILY"],
-                                namespaces.FAMILY_NS[str(name.family_id)],
-                            )
-                        )
+        with self.Session() as session:
+            relations: list[models.Relation] = session.query(models.Relation).all()
 
-                ttl_path = os.path.join(
-                    self.__ttls_folder,
-                    f"{models.Name.__tablename__}_{file_counter}.ttl",
-                )
-                graph.serialize(ttl_path, format="turtle")
-                del graph
+            for relation in tqdm(relations, desc="Creating relation triples"):
+                subject: URIRef = get_uri_ref(relation.subject.iri)
+                object_: URIRef = get_uri_ref(relation.object.iri)
+                predicate = namespaces.REL_NS[
+                    self._format_relation_name(relation.relation_type.name)
+                ]
+
+                graph.add((subject, predicate, object_))
+
+        ttl_path = os.path.join(
+            self.__ttls_folder,
+            f"{models.Relation.__tablename__}.ttl",
+        )
+        graph.serialize(ttl_path, format="turtle")
+        del graph
 
     def _create_zip_from_all_ttls(self) -> str:
         """Package all generated turtle files into a single zip archive.
@@ -348,7 +240,7 @@ class TurtleCreator:
         return path_to_zip_file
 
 
-def create_ttls(
+def create_turtles(
     engine: Optional[Engine] = None,
     export_to_folder: Optional[str] = None,
 ) -> str:
@@ -370,4 +262,4 @@ def create_ttls(
     ttl_creator = TurtleCreator(engine=engine)
     if export_to_folder:
         ttl_creator._set_ttls_folder(export_to_folder)
-    return ttl_creator.create_ttls()
+    return ttl_creator.create_turtles()

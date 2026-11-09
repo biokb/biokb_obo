@@ -3,7 +3,7 @@ from pathlib import Path
 
 # standard for all biokb projects, but individual set
 PROJECT_NAME = "obo"
-BASIC_NODE_LABEL = "DbOBO"
+BASIC_NODE_LABEL = "OBO"
 # standard for all biokb projects
 ORGANIZATION = "biokb"
 LIBRARY_NAME = f"{ORGANIZATION}_{PROJECT_NAME}"
@@ -24,7 +24,7 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # not standard for all biokb projects
 
-URL_DOWNLOAD_TEMPLATE = "http://purl.obolibrary.org/obo/{}.owl"
+URL_DOWNLOAD_TEMPLATE = "https://purl.obolibrary.org/obo/{}.owl"
 
 # files on ftp server in FTP_DIR
 BIOKB_URI = "https://biokb.scai.fraunhofer.de"
@@ -71,4 +71,5 @@ database_purls = {
     "MTH": "http://purl.bioontology.org/ontology/MTH/",
     "SCDO": "http://purl.obolibrary.org/obo/SCDO_",
     "MPATH": "http://purl.obolibrary.org/obo/MPATH_",
+    "GO": "https://purl.obolibrary.org/obo/GO_",
 }
