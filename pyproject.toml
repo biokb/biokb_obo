@@ -1,7 +1,7 @@
 [project]
 name = "biokb-obo"
 version = "0.1.1"
-description = "Add your description here"
+description = "Knowledge graph for bioinformatics OBO ontologies"
 readme = "README.md"
 authors = [
     { name = "Christian Ebeling", email = "Christian.Ebeling@scai.fraunhofer.de" }

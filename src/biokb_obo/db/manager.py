@@ -5,13 +5,12 @@ import os
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Optional
 
 import owlready2.namespace
 import requests
 from owlready2 import ThingClass, get_ontology
 from owlready2.class_construct import Restriction
-from sqlalchemy import Engine, create_engine, delete, or_, select
+from sqlalchemy import Delete, Engine, Row, Select, create_engine, delete, or_, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from tqdm import tqdm
@@ -47,6 +46,7 @@ OBO_PURL_PREFIXES = {
     "RO",
     "SYMP",
     "UBERON",
+    "OBA",
 }
 # Xref prefixes of other databases with a stable URI pattern ({} = identifier)
 XREF_URI_TEMPLATES = {
@@ -167,13 +167,13 @@ def _extract_xrefs(owl_class: ThingClass, term_id: int) -> list[dict]:
     URL as reference id and URI. For ``DB:ID`` xrefs the ``uri`` is filled when
     the database is known (see ``_build_xref_uri``), otherwise it is None.
     """
-    xrefs = []
+    xrefs: list[dict] = []
     for xref in getattr(owl_class, "hasDbXref", None) or []:
         xref = str(xref)
         if xref.startswith(("http://", "https://")):
             database, reference_id, uri = "URL", xref, xref
         elif ":" in xref:
-            database, reference_id = xref.split(":", 1)
+            database, reference_id = xref.split(sep=":", maxsplit=1)
             uri = _build_xref_uri(database, reference_id)
         else:
             continue
@@ -267,7 +267,7 @@ class DbManager:
 
     def __init__(
         self,
-        engine: Optional[Engine] = None,
+        engine: Engine | None = None,
     ):
         """Init DatabaseImporter
 
@@ -329,7 +329,7 @@ class DbManager:
                         f"Incomplete download of {obo_name}: "
                         f"got {actual_size} of {expected_size} bytes"
                     )
-                partial_path.replace(owl_file_path)
+                partial_path.replace(target=owl_file_path)
             except Exception:
                 logger.exception("Download of %s from %s failed", obo_name, url)
                 partial_path.unlink(missing_ok=True)
@@ -342,7 +342,7 @@ class DbManager:
     def __load_ro_relation_types(
         self, session: Session, force_download: bool = False
     ) -> tuple[dict[str, int], int]:
-        existing_relation_types = [
+        existing_relation_types: list[models.RelationType] = [
             relation_type
             for relation_type in session.query(models.RelationType).all()
             if relation_type.iri.startswith(RO_RELATION_IRI_PREFIX)
@@ -356,9 +356,11 @@ class DbManager:
                 0,
             )
 
-        ro_file_path = self.__download_data("ro", force_download=force_download)
-        ro_ontology = get_ontology(f"file://{ro_file_path}").load()
-        relation_types = [
+        ro_file_path: str = self.__download_data(
+            obo_name="ro", force_download=force_download
+        )
+        ro_ontology = get_ontology(base_iri=f"file://{ro_file_path}").load()
+        relation_types: list[models.RelationType] = [
             models.RelationType(
                 iri=prop.iri,
                 name=prop.label[0] if prop.label else prop.iri.rsplit("/", 1)[-1],
@@ -366,7 +368,7 @@ class DbManager:
             for prop in ro_ontology.object_properties()
             if prop.iri.startswith(RO_RELATION_IRI_PREFIX)
         ]
-        session.add_all(relation_types)
+        session.add_all(instances=relation_types)
         session.flush()
         return (
             {relation_type.iri: relation_type.id for relation_type in relation_types},
@@ -384,25 +386,31 @@ class DbManager:
             session (Session): Active SQLAlchemy session.
             ontology (models.Ontology): The ontology to remove.
         """
-        term_ids = select(models.Term.id).where(models.Term.ontology_id == ontology.id)
-        statements = [
+        term_ids: Select[tuple[int]] = select(models.Term.id).where(
+            models.Term.ontology_id == ontology.id
+        )
+        statements: list[Delete] = [
             delete(models.ParentChild).where(
                 or_(
-                    models.ParentChild.parent_id.in_(term_ids),
-                    models.ParentChild.child_id.in_(term_ids),
+                    models.ParentChild.parent_id.in_(other=term_ids),
+                    models.ParentChild.child_id.in_(other=term_ids),
                 )
             ),
             delete(models.Relation).where(
                 or_(
                     models.Relation.subject_id.in_(term_ids),
-                    models.Relation.object_id.in_(term_ids),
+                    models.Relation.object_id.in_(other=term_ids),
                 )
             ),
-            delete(models.Synonym).where(models.Synonym.term_id.in_(term_ids)),
-            delete(models.Identifier).where(models.Identifier.term_id.in_(term_ids)),
-            delete(models.XRef).where(models.XRef.term_id.in_(term_ids)),
-            delete(models.Term).where(models.Term.ontology_id == ontology.id),
-            delete(models.Ontology).where(models.Ontology.id == ontology.id),
+            delete(table=models.Synonym).where(
+                models.Synonym.term_id.in_(other=term_ids)
+            ),
+            delete(table=models.Identifier).where(
+                models.Identifier.term_id.in_(other=term_ids)
+            ),
+            delete(table=models.XRef).where(models.XRef.term_id.in_(other=term_ids)),
+            delete(table=models.Term).where(models.Term.ontology_id == ontology.id),
+            delete(table=models.Ontology).where(models.Ontology.id == ontology.id),
         ]
         for statement in statements:
             session.execute(statement)
@@ -609,9 +617,9 @@ class DbManager:
         returned_data: dict[str, int] = defaultdict(int)
 
         if rebuild:
-            models.Base.metadata.drop_all(self.__engine)
-            logger.info("Rebuild obo tables")
-        models.Base.metadata.create_all(self.__engine)
+            models.Base.metadata.drop_all(bind=self.__engine)
+            logger.info(msg="Rebuild obo tables")
+        models.Base.metadata.create_all(bind=self.__engine)
 
         term_iri_id_dict: dict[str, int] = {}  # iri: id
 
@@ -628,7 +636,7 @@ class DbManager:
             for obo_name in obo_names:
                 if not self.__decide_if_ontology_import(session, obo_name, overwrite):
                     continue
-                counts = self.__import_ontology(
+                counts: dict[str, int] = self.__import_ontology(
                     session,
                     obo_name,
                     ro_relation_type_ids,
@@ -641,7 +649,7 @@ class DbManager:
 
         return returned_data
 
-    def get_id_by_term(self, term: str) -> Optional[int]:
+    def get_id_by_term(self, term: str) -> int | None:
         """Get the ID of a term by its name.
 
         Args:
@@ -651,14 +659,16 @@ class DbManager:
             Optional[int]: The ID of the term if found, else None.
         """
         with self.session as session:
-            result = (
-                session.query(models.Term.id).filter(models.Term.name == term).first()
+            result: Row[tuple[int]] | None = (
+                session.query(_colexpr=models.Term.id)
+                .filter(models.Term.name == term)
+                .first()
             )
             return result[0] if result else None
 
 
 def import_data(
-    engine: Optional[Engine] = None,
+    engine: Engine | None = None,
     force_download: bool = False,
     delete_files: bool = False,
 ) -> dict[str, int]:
@@ -681,7 +691,7 @@ def import_data(
     )
 
 
-def get_session(engine: Optional[Engine] = None) -> Session:
+def get_session(engine: Engine | None = None) -> Session:
     """Get a new SQLAlchemy session.
 
     Returns:
