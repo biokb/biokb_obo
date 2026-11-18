@@ -2,7 +2,7 @@ import logging
 import os.path
 import re
 import shutil
-from typing import Optional, TypeVar
+from typing import TypeVar
 
 from rdflib import RDF, XSD, Graph, Literal, Namespace, URIRef
 from sqlalchemy import Engine, create_engine
@@ -105,6 +105,7 @@ class TurtleCreator:
         self._create_nodes()
         self._create_parent_child()
         self._create_relations()
+        self._create_icd11_xrefs()
 
         # Package everything into a zip file
         path_to_zip_file: str = self._create_zip_from_all_ttls()
@@ -153,6 +154,29 @@ class TurtleCreator:
                     )
                 )
         ttl_path = os.path.join(self.__ttls_folder, f"{models.Term.__tablename__}.ttl")
+        graph.serialize(ttl_path, format="turtle")
+        del graph
+
+    def _create_icd11_xrefs(self) -> None:
+        logger.info("Creating xrefs file.")
+
+        graph = get_empty_graph()
+
+        with self.Session() as session:
+            xrefs: list[models.XRef] = (
+                session.query(models.XRef)
+                .filter(models.XRef.database == "icd11.foundation")
+                .all()
+            )
+
+            for xref in tqdm(xrefs, desc="Creating xref triples"):
+                term_node: URIRef = get_uri_ref(xref.term.iri)
+                xref_uri = "https://bioregistry.io/icd11:" + xref.reference_id
+                xref_node: URIRef = get_uri_ref(xref_uri)
+
+                graph.add((term_node, namespaces.REL_NS["HAS_XREF"], xref_node))
+
+        ttl_path = os.path.join(self.__ttls_folder, f"{models.XRef.__tablename__}.ttl")
         graph.serialize(ttl_path, format="turtle")
         del graph
 
@@ -241,8 +265,8 @@ class TurtleCreator:
 
 
 def create_turtles(
-    engine: Optional[Engine] = None,
-    export_to_folder: Optional[str] = None,
+    engine: Engine | None = None,
+    export_to_folder: str | None = None,
 ) -> str:
     """Create all turtle files.
 
